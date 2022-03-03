@@ -37,13 +37,10 @@ jobs:
           ZSTD_NBTHREADS: 2
         run: |
           cd package-archlinux-x86_64/
-          cp -a --reflink=auto ../systemd/* ./
           tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-archlinux-x86_64.tar.zst .
           cd ../package-linux-amd64/
-          cp -a --reflink=auto ../systemd/* ./
           tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.zst .
           cd ../package-linux-arm64/
-          cp -a --reflink=auto ../systemd/* ./
           tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.zst .
           cd ../package-windows-amd64/
           tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-windows-amd64.tar.zst .
