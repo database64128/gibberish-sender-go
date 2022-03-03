@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish_upload:
+    name: Publish and upload
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux/archlinux:base-devel
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Go
+        run: pacman -Syu --needed --noconfirm go
+
+      - name: Build
+        run: |
+          mkdir package-archlinux-x86_64 package-linux-amd64 package-linux-arm64 package-windows-amd64 package-windows-arm64
+          go build -v -trimpath -ldflags '-s -w -buildid=' -o package-archlinux-x86_64/
+          env CGO_ENABLED=0 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-linux-amd64/
+          env CGO_ENABLED=0 GOARCH=arm64 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-linux-arm64/
+          env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-windows-amd64/
+          env CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-windows-arm64/
+
+      - name: Get version
+        id: get_version
+        run: echo "::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)"
+
+      - name: Package
+        env:
+          ZSTD_CLEVEL: 19
+          ZSTD_NBTHREADS: 2
+        run: |
+          cd package-archlinux-x86_64/
+          cp -a --reflink=auto ../systemd/* ./
+          tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-archlinux-x86_64.tar.zst .
+          cd ../package-linux-amd64/
+          cp -a --reflink=auto ../systemd/* ./
+          tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-linux-amd64.tar.zst .
+          cd ../package-linux-arm64/
+          cp -a --reflink=auto ../systemd/* ./
+          tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.zst .
+          cd ../package-windows-amd64/
+          tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-windows-amd64.tar.zst .
+          cd ../package-windows-arm64/
+          tar -acf ../gibberish-sender-go-${{ steps.get_version.outputs.VERSION }}-windows-arm64.tar.zst .
+
+      - name: Upload release assets
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: gibberish-sender-go-*.tar.zst
+          tag: ${{ github.ref }}
+          file_glob: true
+          prerelease: true
