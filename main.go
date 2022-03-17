@@ -20,14 +20,14 @@ const wakeupFrequency = 5
 func main() {
 	var network string
 	var endpoint string
-	var duration int
+	var duration time.Duration
 	var packetSize int
 	var txSpeedMbps int
 	var suppressTimestamps bool
 
 	flag.StringVar(&network, "network", "tcp", "Endpoint network. Accepts: tcp, tcp4, tcp6, udp, udp4, udp6")
 	flag.StringVar(&endpoint, "endpoint", "", "Endpoint in host:port")
-	flag.IntVar(&duration, "duration", 0, "Duration for sending gibberish in seconds")
+	flag.DurationVar(&duration, "duration", 0, "Duration for sending gibberish")
 	flag.IntVar(&packetSize, "packetSize", 1452, "UDP payload size. Defaults to 1452. 1452 (UDP payload) + 8 (UDP header) + 40 (IPv6 header) = 1500 (Typical Ethernet MTU).")
 	flag.IntVar(&txSpeedMbps, "txSpeedMbps", 0, "UDP transfer speed in Mbps.")
 	flag.BoolVar(&suppressTimestamps, "suppressTimestamps", false, "Specify this flag to omit timestamps in logs")
@@ -87,8 +87,8 @@ func main() {
 	var durationLog string
 
 	if duration > 0 {
-		conn.SetDeadline(startTime.Add(time.Duration(duration) * time.Second))
-		durationLog = fmt.Sprintf(" for %d seconds", duration)
+		conn.SetDeadline(startTime.Add(duration))
+		durationLog = fmt.Sprintf(" for %s", duration.String())
 	}
 
 	log.Printf("Started gibberish sender to %s%s", endpoint, durationLog)
