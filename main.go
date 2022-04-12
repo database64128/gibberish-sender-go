@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -71,15 +72,27 @@ func main() {
 	}
 	defer conn.Close()
 
-	// Resolve UDPAddr
-	var udpaddr *net.UDPAddr
+	// Resolve endpoint for UDP
+	var raddr netip.AddrPort
 
 	switch network {
 	case "udp", "udp4", "udp6":
-		udpaddr, err = net.ResolveUDPAddr(network, endpoint)
+		raddr, err = netip.ParseAddrPort(endpoint)
 		if err != nil {
-			log.Fatal(err)
+			udpaddr, err := net.ResolveUDPAddr(network, endpoint)
+			if err != nil {
+				log.Fatal(err)
+			}
+			raddr = udpaddr.AddrPort()
 		}
+	}
+
+	// Workaround for https://github.com/golang/go/issues/52264
+	if raddr.Addr().Is4() {
+		addr6 := raddr.Addr().As16()
+		ip := netip.AddrFrom16(addr6)
+		port := raddr.Port()
+		raddr = netip.AddrPortFrom(ip, port)
 	}
 
 	// Timer and duration
@@ -94,10 +107,10 @@ func main() {
 	log.Printf("Started gibberish sender to %s%s", endpoint, durationLog)
 
 	// Handle cancellation
-	sigs := make(chan os.Signal)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		sig := <-sigs
+		sig := <-sigCh
 		log.Printf("Received %s, stopping...", sig.String())
 		conn.SetDeadline(time.Now())
 	}()
@@ -135,7 +148,7 @@ func main() {
 			// Send full-size packets
 			for i := 0; i < fullSizePacketsPerWake; i++ {
 				var n int
-				n, err = sendPacket(conn, b[i*packetSize:(i+1)*packetSize], udpaddr)
+				n, err = sendPacket(conn, b[i*packetSize:(i+1)*packetSize], raddr)
 				bytesSent += int64(n)
 				if err != nil {
 					break wake
@@ -145,7 +158,7 @@ func main() {
 			// Send the last small packet
 			if lastSmallPacketSizePerWake > 0 {
 				var n int
-				n, err = sendPacket(conn, b[fullSizePacketsPerWake*packetSize:], udpaddr)
+				n, err = sendPacket(conn, b[fullSizePacketsPerWake*packetSize:], raddr)
 				bytesSent += int64(n)
 				if err != nil {
 					break wake
@@ -160,10 +173,10 @@ func main() {
 	}
 }
 
-func sendPacket(conn net.Conn, b []byte, addr *net.UDPAddr) (n int, err error) {
+func sendPacket(conn net.Conn, b []byte, addr netip.AddrPort) (n int, err error) {
 	switch c := conn.(type) {
 	case *net.UDPConn:
-		n, err = c.WriteToUDP(b, addr)
+		n, err = c.WriteToUDPAddrPort(b, addr)
 	default:
 		n, err = c.Write(b)
 	}
