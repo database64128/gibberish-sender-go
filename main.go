@@ -18,53 +18,48 @@ import (
 // wakes up 5 times a second (every 200ms) to send data.
 const wakeupFrequency = 5
 
+var (
+	network            = flag.String("network", "tcp", "Endpoint network. Accepts: tcp, tcp4, tcp6, udp, udp4, udp6")
+	endpoint           = flag.String("endpoint", "", "Endpoint in host:port")
+	duration           = flag.Duration("duration", 0, "Duration for sending gibberish")
+	packetSize         = flag.Int("packetSize", 1452, "UDP payload size. Defaults to 1452. 1452 (UDP payload) + 8 (UDP header) + 40 (IPv6 header) = 1500 (Typical Ethernet MTU).")
+	txSpeedMbps        = flag.Int("txSpeedMbps", 0, "UDP transfer speed in Mbps.")
+	suppressTimestamps = flag.Bool("suppressTimestamps", false, "Specify this flag to omit timestamps in logs")
+)
+
 func main() {
-	var network string
-	var endpoint string
-	var duration time.Duration
-	var packetSize int
-	var txSpeedMbps int
-	var suppressTimestamps bool
-
-	flag.StringVar(&network, "network", "tcp", "Endpoint network. Accepts: tcp, tcp4, tcp6, udp, udp4, udp6")
-	flag.StringVar(&endpoint, "endpoint", "", "Endpoint in host:port")
-	flag.DurationVar(&duration, "duration", 0, "Duration for sending gibberish")
-	flag.IntVar(&packetSize, "packetSize", 1452, "UDP payload size. Defaults to 1452. 1452 (UDP payload) + 8 (UDP header) + 40 (IPv6 header) = 1500 (Typical Ethernet MTU).")
-	flag.IntVar(&txSpeedMbps, "txSpeedMbps", 0, "UDP transfer speed in Mbps.")
-	flag.BoolVar(&suppressTimestamps, "suppressTimestamps", false, "Specify this flag to omit timestamps in logs")
-
 	flag.Parse()
 
-	if suppressTimestamps {
+	if *suppressTimestamps {
 		log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 	}
 
-	// Validate flags
-	if endpoint == "" {
+	if *endpoint == "" {
 		fmt.Println("Missing -endpoint <host:port>.")
 		flag.Usage()
-		return
+		os.Exit(1)
 	}
 
-	switch network {
+	switch *network {
 	case "tcp", "tcp4", "tcp6":
 	default:
-		if txSpeedMbps == 0 {
+		if *txSpeedMbps == 0 {
 			fmt.Println("-txSpeedMbps is required for non-TCP endpoints.")
 			flag.Usage()
-			return
+			os.Exit(1)
 		}
 	}
 
-	// Open sockets
-	var conn net.Conn
-	var err error
+	var (
+		conn net.Conn
+		err  error
+	)
 
-	switch network {
+	switch *network {
 	case "udp", "udp4", "udp6":
-		conn, err = net.ListenUDP(network, nil)
+		conn, err = net.ListenUDP(*network, nil)
 	default:
-		conn, err = net.Dial(network, endpoint)
+		conn, err = net.Dial(*network, *endpoint)
 	}
 
 	if err != nil {
@@ -72,14 +67,14 @@ func main() {
 	}
 	defer conn.Close()
 
-	// Resolve endpoint for UDP
+	// Resolve endpoint for UDP.
 	var raddr netip.AddrPort
 
-	switch network {
+	switch *network {
 	case "udp", "udp4", "udp6":
-		raddr, err = netip.ParseAddrPort(endpoint)
+		raddr, err = netip.ParseAddrPort(*endpoint)
 		if err != nil {
-			udpaddr, err := net.ResolveUDPAddr(network, endpoint)
+			udpaddr, err := net.ResolveUDPAddr(*network, *endpoint)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -87,26 +82,18 @@ func main() {
 		}
 	}
 
-	// Workaround for https://github.com/golang/go/issues/52264
-	if raddr.Addr().Is4() {
-		addr6 := raddr.Addr().As16()
-		ip := netip.AddrFrom16(addr6)
-		port := raddr.Port()
-		raddr = netip.AddrPortFrom(ip, port)
-	}
-
-	// Timer and duration
+	// Timer and duration.
 	startTime := time.Now()
 	var durationLog string
 
-	if duration > 0 {
-		conn.SetDeadline(startTime.Add(duration))
+	if *duration > 0 {
+		conn.SetDeadline(startTime.Add(*duration))
 		durationLog = fmt.Sprintf(" for %s", duration.String())
 	}
 
-	log.Printf("Started gibberish sender to %s%s", endpoint, durationLog)
+	log.Printf("Started gibberish sender to %s%s", *endpoint, durationLog)
 
-	// Handle cancellation
+	// Handle cancellation.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -115,16 +102,16 @@ func main() {
 		conn.SetDeadline(time.Now())
 	}()
 
-	// Start sending
+	// Start sending.
 	var bytesSent int64
 
-	if c, ok := conn.(*net.TCPConn); ok && txSpeedMbps == 0 {
+	if c, ok := conn.(*net.TCPConn); ok && *txSpeedMbps == 0 {
 		bytesSent, err = c.ReadFrom(rand.Reader)
 	} else {
 		// Wakes up {wakeupFrequency} times per second.
-		bytesPerWake := txSpeedMbps * 1000 * 1000 / 8 / wakeupFrequency
-		fullSizePacketsPerWake := bytesPerWake / packetSize
-		lastSmallPacketSizePerWake := bytesPerWake % packetSize
+		bytesPerWake := *txSpeedMbps * 1000 * 1000 / 8 / wakeupFrequency
+		fullSizePacketsPerWake := bytesPerWake / *packetSize
+		lastSmallPacketSizePerWake := bytesPerWake % *packetSize
 
 		b := make([]byte, bytesPerWake)
 		ch := make(chan struct{}, wakeupFrequency)
@@ -145,20 +132,20 @@ func main() {
 
 			<-ch
 
-			// Send full-size packets
+			// Send full-size packets.
 			for i := 0; i < fullSizePacketsPerWake; i++ {
 				var n int
-				n, err = sendPacket(conn, b[i*packetSize:(i+1)*packetSize], raddr)
+				n, err = sendPacket(conn, b[i**packetSize:(i+1)**packetSize], raddr)
 				bytesSent += int64(n)
 				if err != nil {
 					break wake
 				}
 			}
 
-			// Send the last small packet
+			// Send the last small packet.
 			if lastSmallPacketSizePerWake > 0 {
 				var n int
-				n, err = sendPacket(conn, b[fullSizePacketsPerWake*packetSize:], raddr)
+				n, err = sendPacket(conn, b[fullSizePacketsPerWake**packetSize:], raddr)
 				bytesSent += int64(n)
 				if err != nil {
 					break wake
