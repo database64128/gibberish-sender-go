@@ -1,0 +1,49 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'docs/**'
+
+jobs:
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          export GOAMD64=v3
+          go build -v -trimpath -ldflags '-s -w' ./cmd/gibberish-sender-go
+
+      - name: Test
+        run: go test -v ./...
+
+      - name: Upload Binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: gibberish-sender-go-${{ github.sha }}-${{ matrix.os }}-x86-64-v3
+          path: gibberish-sender-go*
