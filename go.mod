@@ -1,6 +1,6 @@
 module github.com/database64128/gibberish-sender-go
 
-go 1.21.0
+go 1.21.4
 
 require go.uber.org/zap v1.26.0
 
