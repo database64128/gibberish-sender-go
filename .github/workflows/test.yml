@@ -43,7 +43,7 @@ jobs:
         run: go test -v ./...
 
       - name: Upload Binaries
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: gibberish-sender-go-${{ github.sha }}-${{ matrix.os }}-x86-64-v3
           path: gibberish-sender-go*
