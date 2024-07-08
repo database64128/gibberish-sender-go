@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/netip"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/database64128/gibberish-sender-go/fastrand"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +26,7 @@ func throttledSend(ctx context.Context, packetSize, txSpeedMbps int, send func(b
 	fullSizePacketsPerWake := bytesPerWake / packetSize
 	lastSmallPacketSizePerWake := bytesPerWake % packetSize
 
-	r := fastrand.New()
+	r := rand.NewPCG(rand.Uint64(), rand.Uint64())
 	b := make([]byte, bytesPerWake)
 	ticker := time.NewTicker(time.Second / wakeupFrequency)
 
@@ -36,7 +36,7 @@ func throttledSend(ctx context.Context, packetSize, txSpeedMbps int, send func(b
 	}()
 
 	for {
-		r.Fill(b)
+		pcgFillBytes(r, b)
 
 		select {
 		case <-ticker.C:

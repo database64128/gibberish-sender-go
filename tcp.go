@@ -3,13 +3,13 @@ package gibberish
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/database64128/gibberish-sender-go/fastrand"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +43,7 @@ func (s *TCPSender) newTCPConn(ctx context.Context) (*net.TCPConn, error) {
 
 // Run starts sending gibberish until the context is done.
 func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
-	r := fastrand.New()
+	r := rand.NewPCG(rand.Uint64(), rand.Uint64())
 	b := make([]byte, 32768)
 
 	for {
@@ -79,7 +79,7 @@ func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
 		var bytesSent uint64
 
 		for {
-			r.Fill(b)
+			pcgFillBytes(r, b)
 
 			n, err := c.Write(b)
 			bytesSent += uint64(n)
