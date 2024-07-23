@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"net/netip"
@@ -11,8 +12,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 // When there's a transfer speed limit,
@@ -115,15 +114,15 @@ func (s *ThrottledSender) newTCPConn(ctx context.Context) (*net.TCPConn, error) 
 	return c.(*net.TCPConn), nil
 }
 
-func (s *ThrottledSender) runTCP(ctx context.Context, logger *zap.Logger) {
+func (s *ThrottledSender) runTCP(ctx context.Context, logger *slog.Logger) {
 	for {
-		logger.Info("Connecting to TCP endpoint", zap.String("address", s.address))
+		logger.LogAttrs(ctx, slog.LevelInfo, "Connecting to TCP endpoint", slog.String("address", s.address))
 
 		c, err := s.newTCPConn(ctx)
 		if err != nil {
-			logger.Warn("Failed to connect to TCP endpoint",
-				zap.String("address", s.address),
-				zap.Error(err),
+			logger.LogAttrs(ctx, slog.LevelWarn, "Failed to connect to TCP endpoint",
+				slog.String("address", s.address),
+				slog.Any("error", err),
 			)
 
 			select {
@@ -134,7 +133,7 @@ func (s *ThrottledSender) runTCP(ctx context.Context, logger *zap.Logger) {
 			}
 		}
 
-		logger.Info("Connected to TCP endpoint", zap.String("address", s.address))
+		logger.LogAttrs(ctx, slog.LevelInfo, "Connected to TCP endpoint", slog.String("address", s.address))
 
 		writeFailed := make(chan struct{})
 		go func() {
@@ -150,18 +149,18 @@ func (s *ThrottledSender) runTCP(ctx context.Context, logger *zap.Logger) {
 		})
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
-				logger.Warn("Failed to write to TCP endpoint",
-					zap.String("address", s.address),
-					zap.Error(err),
+				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to write to TCP endpoint",
+					slog.String("address", s.address),
+					slog.Any("error", err),
 				)
 				close(writeFailed)
 			}
 			c.Close()
 		}
 
-		logger.Info("Disconnected from TCP endpoint",
-			zap.String("address", s.address),
-			zap.Uint64("bytesSent", bytesSent),
+		logger.LogAttrs(ctx, slog.LevelInfo, "Disconnected from TCP endpoint",
+			slog.String("address", s.address),
+			slog.Uint64("bytesSent", bytesSent),
 		)
 
 		select {
@@ -172,10 +171,11 @@ func (s *ThrottledSender) runTCP(ctx context.Context, logger *zap.Logger) {
 	}
 }
 
-func (s *ThrottledSender) runUDP(ctx context.Context, logger *zap.Logger) {
+func (s *ThrottledSender) runUDP(ctx context.Context, logger *slog.Logger) {
 	pc, err := s.listenConfig.ListenPacket(ctx, s.network, "")
 	if err != nil {
-		logger.Fatal("Failed to create UDP socket", zap.Error(err))
+		logger.LogAttrs(ctx, slog.LevelError, "Failed to create UDP socket", slog.Any("error", err))
+		return
 	}
 	uc := pc.(*net.UDPConn)
 	defer uc.Close()
@@ -184,20 +184,20 @@ func (s *ThrottledSender) runUDP(ctx context.Context, logger *zap.Logger) {
 		return uc.WriteToUDPAddrPort(b, s.addrPort)
 	})
 	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-		logger.Warn("Failed to write to UDP endpoint",
-			zap.String("address", s.address),
-			zap.Error(err),
+		logger.LogAttrs(ctx, slog.LevelWarn, "Failed to write to UDP endpoint",
+			slog.String("address", s.address),
+			slog.Any("error", err),
 		)
 	}
 
-	logger.Info("Finished sending to UDP endpoint",
-		zap.String("address", s.address),
-		zap.Uint64("bytesSent", bytesSent),
+	logger.LogAttrs(ctx, slog.LevelInfo, "Finished sending to UDP endpoint",
+		slog.String("address", s.address),
+		slog.Uint64("bytesSent", bytesSent),
 	)
 }
 
 // Run starts sending gibberish until the context is done.
-func (s *ThrottledSender) Run(ctx context.Context, logger *zap.Logger) {
+func (s *ThrottledSender) Run(ctx context.Context, logger *slog.Logger) {
 	switch s.network {
 	case "tcp", "tcp4", "tcp6":
 		s.runTCP(ctx, logger)
@@ -209,10 +209,10 @@ func (s *ThrottledSender) Run(ctx context.Context, logger *zap.Logger) {
 }
 
 // RunParallel starts multiple sending goroutines that finish when the context is done.
-func (s *ThrottledSender) RunParallel(ctx context.Context, logger *zap.Logger, concurrency int) {
+func (s *ThrottledSender) RunParallel(ctx context.Context, logger *slog.Logger, concurrency int) {
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
-		logger := logger.Named(strconv.Itoa(i))
+		logger := logger.WithGroup(strconv.Itoa(i))
 		wg.Add(1)
 		go func() {
 			s.Run(ctx, logger)

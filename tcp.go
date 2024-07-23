@@ -3,14 +3,13 @@ package gibberish
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"os"
 	"strconv"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 const dialRetryInterval = 1 * time.Second
@@ -42,18 +41,18 @@ func (s *TCPSender) newTCPConn(ctx context.Context) (*net.TCPConn, error) {
 }
 
 // Run starts sending gibberish until the context is done.
-func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
+func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
 	r := rand.NewPCG(rand.Uint64(), rand.Uint64())
 	b := make([]byte, 32768)
 
 	for {
-		logger.Info("Connecting to TCP endpoint", zap.String("address", s.address))
+		logger.LogAttrs(ctx, slog.LevelInfo, "Connecting to TCP endpoint", slog.String("address", s.address))
 
 		c, err := s.newTCPConn(ctx)
 		if err != nil {
-			logger.Warn("Failed to connect to TCP endpoint",
-				zap.String("address", s.address),
-				zap.Error(err),
+			logger.LogAttrs(ctx, slog.LevelWarn, "Failed to connect to TCP endpoint",
+				slog.String("address", s.address),
+				slog.Any("error", err),
 			)
 
 			select {
@@ -64,7 +63,7 @@ func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
 			}
 		}
 
-		logger.Info("Connected to TCP endpoint", zap.String("address", s.address))
+		logger.LogAttrs(ctx, slog.LevelInfo, "Connected to TCP endpoint", slog.String("address", s.address))
 
 		writeFailed := make(chan struct{})
 
@@ -88,9 +87,9 @@ func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
 					c.Close()
 					break
 				}
-				logger.Warn("Failed to write to TCP endpoint",
-					zap.String("address", s.address),
-					zap.Error(err),
+				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to write to TCP endpoint",
+					slog.String("address", s.address),
+					slog.Any("error", err),
 				)
 				close(writeFailed)
 				c.Close()
@@ -98,9 +97,9 @@ func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
 			}
 		}
 
-		logger.Info("Disconnected from TCP endpoint",
-			zap.String("address", s.address),
-			zap.Uint64("bytesSent", bytesSent),
+		logger.LogAttrs(ctx, slog.LevelInfo, "Disconnected from TCP endpoint",
+			slog.String("address", s.address),
+			slog.Uint64("bytesSent", bytesSent),
 		)
 
 		select {
@@ -112,10 +111,10 @@ func (s *TCPSender) Run(ctx context.Context, logger *zap.Logger) {
 }
 
 // RunParallel starts multiple sending goroutines that finish when the context is done.
-func (s *TCPSender) RunParallel(ctx context.Context, logger *zap.Logger, concurrency int) {
+func (s *TCPSender) RunParallel(ctx context.Context, logger *slog.Logger, concurrency int) {
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
-		logger := logger.Named(strconv.Itoa(i))
+		logger := logger.WithGroup(strconv.Itoa(i))
 		wg.Add(1)
 		go func() {
 			s.Run(ctx, logger)

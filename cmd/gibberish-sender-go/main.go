@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -11,15 +12,10 @@ import (
 	"time"
 
 	"github.com/database64128/gibberish-sender-go"
-	"github.com/database64128/gibberish-sender-go/jsonhelper"
-	"github.com/database64128/gibberish-sender-go/logging"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 var (
-	zapConf       string
-	logLevel      zapcore.Level
+	logLevel      slog.Level
 	network       string
 	endpoint      string
 	duration      time.Duration
@@ -30,8 +26,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&zapConf, "zapConf", "", "Preset name or path to JSON configuration file for building the zap logger.\nAvailable presets: console (default), systemd, production, development")
-	flag.TextVar(&logLevel, "logLevel", zapcore.InvalidLevel, "Override the logger configuration's log level.\nAvailable levels: debug, info, warn, error, dpanic, panic, fatal")
+	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level")
 	flag.StringVar(&network, "network", "tcp", "Endpoint network. Accepts: tcp, tcp4, tcp6, udp, udp4, udp6")
 	flag.StringVar(&endpoint, "endpoint", "", "Endpoint in host:port")
 	flag.DurationVar(&duration, "duration", 0, "Duration for sending gibberish")
@@ -74,34 +69,7 @@ func main() {
 		badFlagValue("Invalid -network.")
 	}
 
-	var zc zap.Config
-
-	switch zapConf {
-	case "console", "":
-		zc = logging.NewProductionConsoleConfig(false)
-	case "systemd":
-		zc = logging.NewProductionConsoleConfig(true)
-	case "production":
-		zc = zap.NewProductionConfig()
-	case "development":
-		zc = zap.NewDevelopmentConfig()
-	default:
-		if err := jsonhelper.LoadAndDecodeDisallowUnknownFields(zapConf, &zc); err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to load zap logger config:", err)
-			os.Exit(1)
-		}
-	}
-
-	if logLevel != zapcore.InvalidLevel {
-		zc.Level.SetLevel(logLevel)
-	}
-
-	logger, err := zc.Build()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to build logger:", err)
-		os.Exit(1)
-	}
-	defer logger.Sync()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
 	var (
 		ctx    context.Context
@@ -118,7 +86,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		logger.Info("Received exit signal", zap.Stringer("signal", sig))
+		logger.LogAttrs(ctx, slog.LevelInfo, "Received exit signal", slog.Any("signal", sig))
 		cancel()
 	}()
 
@@ -127,7 +95,7 @@ func main() {
 	} else {
 		s, err := gibberish.NewThrottledSender(net.ListenConfig{}, net.Dialer{}, network, endpoint, packetSize, txSpeedMbps, retryInterval)
 		if err != nil {
-			logger.Fatal("Failed to create throttled sender", zap.Error(err))
+			logger.LogAttrs(ctx, slog.LevelError, "Failed to create throttled sender", slog.Any("error", err))
 		}
 		s.RunParallel(ctx, logger, concurrency)
 	}
