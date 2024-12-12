@@ -87,6 +87,7 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		logger.LogAttrs(ctx, slog.LevelInfo, "Received exit signal", slog.Any("signal", sig))
+		signal.Stop(sigCh)
 		cancel()
 	}()
 
@@ -96,6 +97,7 @@ func main() {
 		s, err := gibberish.NewThrottledSender(net.ListenConfig{}, net.Dialer{}, network, endpoint, packetSize, txSpeedMbps, retryInterval)
 		if err != nil {
 			logger.LogAttrs(ctx, slog.LevelError, "Failed to create throttled sender", slog.Any("error", err))
+			os.Exit(1)
 		}
 		s.RunParallel(ctx, logger, concurrency)
 	}
