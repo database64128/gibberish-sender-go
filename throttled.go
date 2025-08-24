@@ -27,24 +27,21 @@ func throttledSend(ctx context.Context, packetSize, txSpeedMbps int, send func(b
 
 	r := rand.NewPCG(rand.Uint64(), rand.Uint64())
 	b := make([]byte, bytesPerWake)
+	ctxDone := ctx.Done()
 	ticker := time.NewTicker(time.Second / wakeupFrequency)
-
-	go func() {
-		<-ctx.Done()
-		ticker.Stop()
-	}()
+	defer ticker.Stop()
 
 	for {
 		pcgFillBytes(r, b)
 
 		select {
-		case <-ticker.C:
-		case <-ctx.Done():
+		case <-ctxDone:
 			return
+		case <-ticker.C:
 		}
 
 		// Send full-size packets.
-		for i := 0; i < fullSizePacketsPerWake; i++ {
+		for i := range fullSizePacketsPerWake {
 			var n int
 			n, err = send(b[i*packetSize : (i+1)*packetSize])
 			bytesSent += uint64(n)
@@ -115,6 +112,8 @@ func (s *ThrottledSender) newTCPConn(ctx context.Context) (*net.TCPConn, error) 
 }
 
 func (s *ThrottledSender) runTCP(ctx context.Context, logger *slog.Logger) {
+	ctxDone := ctx.Done()
+
 	for {
 		logger.LogAttrs(ctx, slog.LevelInfo, "Connecting to TCP endpoint", slog.String("address", s.address))
 
@@ -126,7 +125,7 @@ func (s *ThrottledSender) runTCP(ctx context.Context, logger *slog.Logger) {
 			)
 
 			select {
-			case <-ctx.Done():
+			case <-ctxDone:
 				return
 			case <-time.After(dialRetryInterval):
 				continue
@@ -135,28 +134,22 @@ func (s *ThrottledSender) runTCP(ctx context.Context, logger *slog.Logger) {
 
 		logger.LogAttrs(ctx, slog.LevelInfo, "Connected to TCP endpoint", slog.String("address", s.address))
 
-		writeFailed := make(chan struct{})
-		go func() {
-			select {
-			case <-ctx.Done():
-				c.SetDeadline(time.Now())
-			case <-writeFailed:
-			}
-		}()
+		stop := context.AfterFunc(ctx, func() {
+			c.SetDeadline(aLongTimeAgo)
+		})
 
 		bytesSent, err := throttledSend(ctx, 32768, s.txSpeedMbps, func(b []byte) (int, error) {
 			return c.Write(b)
 		})
-		if err != nil {
-			if !errors.Is(err, os.ErrDeadlineExceeded) {
-				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to write to TCP endpoint",
-					slog.String("address", s.address),
-					slog.Any("error", err),
-				)
-				close(writeFailed)
-			}
-			c.Close()
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			logger.LogAttrs(ctx, slog.LevelWarn, "Failed to write to TCP endpoint",
+				slog.String("address", s.address),
+				slog.Any("error", err),
+			)
+			_ = stop()
 		}
+
+		_ = c.Close()
 
 		logger.LogAttrs(ctx, slog.LevelInfo, "Disconnected from TCP endpoint",
 			slog.String("address", s.address),
@@ -164,7 +157,7 @@ func (s *ThrottledSender) runTCP(ctx context.Context, logger *slog.Logger) {
 		)
 
 		select {
-		case <-ctx.Done():
+		case <-ctxDone:
 			return
 		case <-time.After(s.retryInterval):
 		}
@@ -211,13 +204,11 @@ func (s *ThrottledSender) Run(ctx context.Context, logger *slog.Logger) {
 // RunParallel starts multiple sending goroutines that finish when the context is done.
 func (s *ThrottledSender) RunParallel(ctx context.Context, logger *slog.Logger, concurrency int) {
 	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		logger := logger.WithGroup(strconv.Itoa(i))
-		wg.Add(1)
-		go func() {
+		wg.Go(func() {
 			s.Run(ctx, logger)
-			wg.Done()
-		}()
+		})
 	}
 	wg.Wait()
 }

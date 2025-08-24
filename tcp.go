@@ -14,6 +14,9 @@ import (
 
 const dialRetryInterval = 1 * time.Second
 
+// aLongTimeAgo is a non-zero time, far in the past, used for immediate deadlines.
+var aLongTimeAgo = time.Unix(0, 0)
+
 // TCPSender sends gibberish to a TCP endpoint at full speed.
 type TCPSender struct {
 	dialer        net.Dialer
@@ -42,6 +45,7 @@ func (s *TCPSender) newTCPConn(ctx context.Context) (*net.TCPConn, error) {
 
 // Run starts sending gibberish until the context is done.
 func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
+	ctxDone := ctx.Done()
 	r := rand.NewPCG(rand.Uint64(), rand.Uint64())
 	b := make([]byte, 32768)
 
@@ -56,7 +60,7 @@ func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
 			)
 
 			select {
-			case <-ctx.Done():
+			case <-ctxDone:
 				return
 			case <-time.After(dialRetryInterval):
 				continue
@@ -65,15 +69,9 @@ func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
 
 		logger.LogAttrs(ctx, slog.LevelInfo, "Connected to TCP endpoint", slog.String("address", s.address))
 
-		writeFailed := make(chan struct{})
-
-		go func() {
-			select {
-			case <-ctx.Done():
-				c.SetDeadline(time.Now())
-			case <-writeFailed:
-			}
-		}()
+		stop := context.AfterFunc(ctx, func() {
+			c.SetDeadline(aLongTimeAgo)
+		})
 
 		var bytesSent uint64
 
@@ -84,18 +82,18 @@ func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
 			bytesSent += uint64(n)
 			if err != nil {
 				if errors.Is(err, os.ErrDeadlineExceeded) {
-					c.Close()
 					break
 				}
 				logger.LogAttrs(ctx, slog.LevelWarn, "Failed to write to TCP endpoint",
 					slog.String("address", s.address),
 					slog.Any("error", err),
 				)
-				close(writeFailed)
-				c.Close()
+				_ = stop()
 				break
 			}
 		}
+
+		_ = c.Close()
 
 		logger.LogAttrs(ctx, slog.LevelInfo, "Disconnected from TCP endpoint",
 			slog.String("address", s.address),
@@ -103,7 +101,7 @@ func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
 		)
 
 		select {
-		case <-ctx.Done():
+		case <-ctxDone:
 			return
 		case <-time.After(s.retryInterval):
 		}
@@ -113,13 +111,11 @@ func (s *TCPSender) Run(ctx context.Context, logger *slog.Logger) {
 // RunParallel starts multiple sending goroutines that finish when the context is done.
 func (s *TCPSender) RunParallel(ctx context.Context, logger *slog.Logger, concurrency int) {
 	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		logger := logger.WithGroup(strconv.Itoa(i))
-		wg.Add(1)
-		go func() {
+		wg.Go(func() {
 			s.Run(ctx, logger)
-			wg.Done()
-		}()
+		})
 	}
 	wg.Wait()
 }
