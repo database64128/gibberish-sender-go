@@ -40,5 +40,5 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: gibberish-sender-go-${{ github.sha }}-${{ matrix.os }}-x86-64
+          name: gibberish-sender-go-${{ github.sha }}-${{ matrix.os }}-${{ runner.arch }}
           path: gibberish-sender-go*
